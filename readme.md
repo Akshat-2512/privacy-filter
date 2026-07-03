@@ -18,3 +18,6 @@ Assume we will have a data set with [ account_number | private_address | private
 currently trading precision and recall can you help you in more protection but the claim is scrubbing doesnt give you 100 percent protection and 98 percent recall is also not good enough and how this metric is  biased.
 
 there can be conjectures and links in the text file itself, for example if mr x and mr y are neighbours, if the dataset has only one neighbour for x which is in the dataset, revealing mr x identity also reveals mr y's. 
+
+for things like time and other details which are not one to one mapping the attacker agent will have some estimate about the time and the details, we can  evaluate by how close our guess is for time, for ex if time duration between two timestep is known due to conversation/context we can have better guesses. 
+
