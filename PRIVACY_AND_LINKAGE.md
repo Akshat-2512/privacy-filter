@@ -23,7 +23,7 @@ The core thesis:
 
 ---
 
-## How privacy-filter accuracy is measured today
+## How privacy-filter accuracy is measured in openai-privacy filter study.
 
 Detection is a classification problem: for every token (or span) in the text, the filter
 decides "sensitive" or "not sensitive." Quality is reported with two metrics.
