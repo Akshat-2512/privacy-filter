@@ -1,0 +1,5 @@
+run,ts,attack,dataset,target_in_reference,docs,entities,accuracy,tool_lookups,tool_success,use_memory,empirical_recall,leaked_acc,clean_acc,xrefs,memorization,n,hard_exact,softstr_agent,softstr_estimate
+leak (link on),2026-07-06 14:46,leak_linkage,SPY,True,24.0,110.0,1.0,89.0,69.0,,,,,,,24.0,,,
+leak (link off),2026-07-06 14:50,leak_linkage,SPY,False,24.0,110.0,0.00909090909090909,185.0,1.0,,,,,,,24.0,,,
+real_filter (mem on),2026-07-06 15:25,real_filter,SPY,True,,390.0,0.9487179487179487,366.0,253.0,True,0.8262295081967213,0.9487179487179487,0.0,177.0,0.0,200.0,,,
+fuzzy_linkage,2026-07-06 15:28,fuzzy_linkage,SPY,,,,,,,,,,,,,24.0,1.0,0.9042252487348023,0.9063734764469398
