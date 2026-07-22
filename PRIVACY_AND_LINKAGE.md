@@ -140,24 +140,39 @@ privacy survives. In our runs, when the target is present in the reference table
 ("link on"), the attacker's reconstruction accuracy jumps to ~100%; with linkage off it
 collapses to near zero — the linkage database, not the filter, is doing the work.
 
-### What future cases will add
+### Real public-source reference construction: Enron
 
-The realistic attacker does more work, and we plan to model it step by step:
+The next stage is implemented in `enron_reference_attack.py` using the real public Enron
+email corpus. No generated identities or synthetic web pages are used, and no raw Enron
+records are committed to this repository. The pinned corpus is streamed at runtime.
 
-- **Constructing the linked database from raw sources** — extracting a structured
-  reference table out of public text files, web pages, leaked dumps, or other databases,
-  rather than being handed one.
-- **Information extraction and normalization** — parsing messy public text into clean
-  attributes, resolving formats, and deduplicating entities.
-- **Preparing a guess for each scrubbed token** — for every `[PRIVATE_*]` placeholder,
-  produce a ranked candidate value from the reference data plus in-document context.
-- **Fuzzy / probabilistic linkage** — matching when keys are approximate, partial, or
-  noisy (see the `fuzzy_linkage` run in `results.csv`), including soft-string scoring of
-  how close a guess is to the truth.
-- **Estimating non-one-to-one fields** — attributes like timestamps are not unique keys,
-  so instead of exact recovery the attacker produces an *estimate*, and we score it by
-  closeness. If the gap between two timestamps is fixed by the conversation/context, the
-  estimate gets much better.
+The experiment separates messages into disjoint reference and target sets:
+
+1. **Selection:** choose repeatedly observed senders and reserve early messages as public
+   reference evidence while holding out a later message as the target. Message IDs are
+   checked for overlap.
+2. **Redaction:** replace every email address in each held-out target with a distinct
+   `[PRIVATE_EMAIL_n]` token. This deterministic perfect scrubber isolates linkage from
+   filter-detection errors.
+3. **Collection:** have the attacker LLM extract names, addresses, signatures, aliases,
+   and communication relationships from the raw reference messages.
+4. **Entity resolution:** merge facts primarily by exact address, retaining evidence
+   message IDs, and construct the reference table rather than receiving one.
+5. **Decoding:** provide only the constructed table and redacted target to the attacker.
+   Hidden answers and sender-selection metadata are explicitly excluded from prompts.
+6. **Controls:** repeat decoding with an empty reference table and report the resulting
+   linkage accuracy lift.
+
+The dataset is `corbt/enron-emails`, pinned to a specific Hugging Face revision and
+traceable to the CMU/CALO Enron corpus. Because the messages concern real people, the
+runner requires an explicit `--confirm-public-data-processing` flag before transmitting
+records to a model API, keeps run artifacts gitignored, and recommends publishing only
+aggregate metrics and message IDs. See `enron_data/README.md` for provenance and handling
+requirements.
+
+Remaining extensions include fuzzy entity resolution, temporal splits, actual OPF output
+in place of deterministic address scrubbing, and bounded web-source enrichment with a
+reproducible cache.
 
 ---
 
@@ -192,8 +207,10 @@ it — which is exactly what this project does.
 
 - `privacy_filter_test.ipynb` — runs the privacy filter and measures detection quality.
 - `spy_attacker.ipynb` — the attacker: reconstructs originals via linkage and context.
-- `results.csv` / `results.json` — attack outcomes across settings (`link on/off`,
+- `enron_reference_attack.py` — streams real Enron messages, creates disjoint reference
+  and held-out splits, builds an attacker reference table, and decodes redacted targets.
+- `enron_data/README.md` — dataset provenance, protocol, commands, and real-data handling
+  requirements.
+- `results.csv` / `results.json` — earlier attack outcomes across settings (`link on/off`,
   `real_filter`, `fuzzy_linkage`), including reconstruction accuracy, empirical recall,
   tool-lookup success, and soft-string closeness scores.
-- `readme.md` — running notes on failure modes and confounds to control (memorization,
-  false pivots, cross-doc memory).
