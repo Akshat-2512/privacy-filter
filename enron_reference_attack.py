@@ -333,12 +333,21 @@ def append_metric_history(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def require_plotting() -> None:
+    """Fail before dataset/API work when plotting was requested but is unavailable."""
+    try:
+        import matplotlib.pyplot  # noqa: F401
+    except ImportError as exc:
+        raise SystemExit(
+            "Plotting requires matplotlib. Install it with:\n"
+            "  python -m pip install -r requirements-enron-attack.txt\n"
+            "or run with --no-plots to produce CSV/JSON metrics only."
+        ) from exc
+
+
 def plot_metrics(rows: list[dict[str, Any]], output_dir: Path, suffix: str) -> list[Path]:
     """Create sample-size plots from one sweep (or a single-run point)."""
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError as exc:
-        raise RuntimeError("Plotting requires matplotlib; reinstall requirements") from exc
+    import matplotlib.pyplot as plt
     ordered = sorted(rows, key=lambda row: int(row["target_samples"]))
     x = [int(row["target_samples"]) for row in ordered]
     paths = []
@@ -440,6 +449,8 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--with-control", action="store_true",
                         help="also attack with an empty table to measure linkage lift")
+    parser.add_argument("--no-plots", action="store_true",
+                        help="write CSV/JSON metrics without requiring matplotlib")
     parser.add_argument("--prepare-only", action="store_true",
                         help="stream/select records but make no API calls")
     parser.add_argument("--confirm-public-data-processing", action="store_true",
@@ -451,6 +462,8 @@ def main() -> int:
         raise ValueError("Numeric options must be positive")
 
     sweep_sizes = parse_sweep(args.sweep_identities, args.identities)
+    if not args.prepare_only and not args.no_plots:
+        require_plotting()
     records = stream_records(args.scan_limit, args.body_chars)
 
     prepared = []
@@ -518,7 +531,9 @@ def main() -> int:
     csv_path = args.output_dir / f"metrics-{timestamp}.csv"
     write_metric_csv(csv_path, metric_rows)
     append_metric_history(args.output_dir / "metrics-history.csv", metric_rows)
-    plot_paths = plot_metrics(metric_rows, args.output_dir, timestamp)
+    plot_paths = (
+        [] if args.no_plots else plot_metrics(metric_rows, args.output_dir, timestamp)
+    )
     (args.output_dir / f"sweep-{timestamp}.json").write_text(
         json.dumps({"timestamp": timestamp, "model": args.model,
                     "sweep_sizes": sweep_sizes, "runs": aggregate_runs,

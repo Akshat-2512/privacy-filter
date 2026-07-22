@@ -40,11 +40,16 @@ while retaining the same split and leakage controls.
 
 ## Usage
 
-Install dependencies:
+Install dependencies in the same Python environment used to run the script:
 
 ```bash
-pip install -r requirements-enron-attack.txt
+python -m pip install -r requirements-enron-attack.txt
+python -c "import matplotlib; print(matplotlib.__version__)"
 ```
+
+If you intentionally do not want PNG graphs, pass `--no-plots`; CSV and JSON metrics
+will still be generated. Plot dependency validation happens before dataset loading or
+paid API calls, so a missing package cannot waste a completed experiment.
 
 Prepare the split and print message IDs without sending anything to an API:
 
