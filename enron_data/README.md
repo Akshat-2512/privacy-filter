@@ -61,6 +61,29 @@ python enron_reference_attack.py \
   --with-control
 ```
 
+Run a sample-size sweep (each size is an independent table-construction and attack run):
+
+```bash
+python enron_reference_attack.py \
+  --sweep-identities 2,4,8,12 \
+  --scan-limit 10000 \
+  --confirm-public-data-processing \
+  --with-control
+```
+
+Every completed run writes a metrics CSV and three PNG plots under
+`experiment_outputs/enron/`:
+
+- `accuracy-vs-samples-*.png`: all-token accuracy, sender accuracy, empty-table control,
+  and linkage accuracy lift versus held-out target count.
+- `recovery-quality-vs-samples-*.png`: coverage and precision among attempted guesses.
+- `experiment-scale-*.png`: number of reference emails and redacted tokens at each size.
+- `metrics-*.csv`: the exact plotted numbers for that run or sweep.
+- `metrics-history.csv`: append-only local metrics across invocations.
+
+With only one sample size, the graphs contain one point; use `--sweep-identities` for
+curves. A sweep makes additional model calls at every size, including the control calls.
+
 The explicit confirmation flag is required because reference emails contain real data
 and are transmitted to the configured model provider. Review that provider's data-use
 terms and your institution's research/ethics requirements first.
@@ -69,7 +92,7 @@ Useful size controls:
 
 ```bash
 python enron_reference_attack.py --prepare-only \
-  --scan-limit 10000 --identities 12 --sources-per-identity 6
+  --scan-limit 10000 --sweep-identities 2,4,8,12 --sources-per-identity 6
 ```
 
 ## Data-handling rules

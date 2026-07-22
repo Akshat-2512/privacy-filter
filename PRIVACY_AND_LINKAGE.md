@@ -162,6 +162,9 @@ The experiment separates messages into disjoint reference and target sets:
    Hidden answers and sender-selection metadata are explicitly excluded from prompts.
 6. **Controls:** repeat decoding with an empty reference table and report the resulting
    linkage accuracy lift.
+7. **Scale sweep:** repeat the complete construction/attack pipeline at multiple held-out
+   sample counts and save CSV numbers plus plots of accuracy, sender accuracy, control
+   accuracy, linkage lift, coverage, precision, and experiment scale versus sample count.
 
 The dataset is `corbt/enron-emails`, pinned to a specific Hugging Face revision and
 traceable to the CMU/CALO Enron corpus. Because the messages concern real people, the

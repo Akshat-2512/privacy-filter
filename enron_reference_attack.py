@@ -8,7 +8,8 @@ disjoint. The LLM sees reference messages and redacted targets, never target ans
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
+from collections import defaultdict
+import csv
 import hashlib
 import json
 import os
@@ -290,6 +291,125 @@ def evaluate(results: list[dict], targets: list[dict]) -> dict[str, Any]:
     }
 
 
+def metric_row(metrics: dict, reference: list[dict], targets: list[dict], args,
+               timestamp: str) -> dict[str, Any]:
+    attack = metrics["table_attack"]
+    control = metrics.get("empty_table_control", {})
+    return {
+        "timestamp": timestamp,
+        "model": args.model,
+        "scan_limit": args.scan_limit,
+        "target_samples": len(targets),
+        "reference_samples": len(reference),
+        "redacted_tokens": attack["tokens"],
+        "accuracy": attack["accuracy"],
+        "sender_accuracy": attack["sender_accuracy"],
+        "coverage": attack["coverage"],
+        "precision_when_attempted": attack["precision_when_attempted"],
+        "control_accuracy": control.get("accuracy"),
+        "linkage_accuracy_lift": metrics.get("linkage_accuracy_lift"),
+    }
+
+
+def write_metric_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def append_metric_history(path: Path, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    exists = path.exists()
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        if not exists:
+            writer.writeheader()
+        writer.writerows(rows)
+
+
+def plot_metrics(rows: list[dict[str, Any]], output_dir: Path, suffix: str) -> list[Path]:
+    """Create sample-size plots from one sweep (or a single-run point)."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise RuntimeError("Plotting requires matplotlib; reinstall requirements") from exc
+    ordered = sorted(rows, key=lambda row: int(row["target_samples"]))
+    x = [int(row["target_samples"]) for row in ordered]
+    paths = []
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    plotted_values = []
+    for field, label, marker in (
+        ("accuracy", "All-token accuracy", "o"),
+        ("sender_accuracy", "Sender accuracy", "s"),
+        ("control_accuracy", "Empty-table control", "^"),
+        ("linkage_accuracy_lift", "Linkage accuracy lift", "D"),
+    ):
+        points = [(n, row.get(field)) for n, row in zip(x, ordered)
+                  if row.get(field) not in (None, "")]
+        if points:
+            values = [float(p[1]) for p in points]
+            plotted_values.extend(values)
+            ax.plot([p[0] for p in points], values, marker=marker, label=label)
+    lower_bound = min(-0.03, min(plotted_values, default=0.0) - 0.03)
+    ax.set(title="Enron reconstruction accuracy vs held-out samples",
+           xlabel="Held-out target emails", ylabel="Score", ylim=(lower_bound, 1.03))
+    ax.grid(alpha=0.25)
+    ax.legend()
+    fig.tight_layout()
+    path = output_dir / f"accuracy-vs-samples-{suffix}.png"
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+    paths.append(path)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(x, [float(row["coverage"]) for row in ordered], marker="o", label="Coverage")
+    ax.plot(x, [float(row["precision_when_attempted"]) for row in ordered],
+            marker="s", label="Precision when attempted")
+    ax.set(title="Enron recovery quality vs held-out samples",
+           xlabel="Held-out target emails", ylabel="Score", ylim=(-0.03, 1.03))
+    ax.grid(alpha=0.25)
+    ax.legend()
+    fig.tight_layout()
+    path = output_dir / f"recovery-quality-vs-samples-{suffix}.png"
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+    paths.append(path)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(x, [int(row["reference_samples"]) for row in ordered], marker="o",
+            label="Reference emails")
+    ax.plot(x, [int(row["redacted_tokens"]) for row in ordered], marker="s",
+            label="Redacted tokens")
+    ax.set(title="Experiment scale", xlabel="Held-out target emails", ylabel="Count")
+    ax.grid(alpha=0.25)
+    ax.legend()
+    fig.tight_layout()
+    path = output_dir / f"experiment-scale-{suffix}.png"
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+    paths.append(path)
+    return paths
+
+
+def parse_sweep(value: str | None, default: int) -> list[int]:
+    if not value:
+        return [default]
+    try:
+        sizes = sorted(set(int(item.strip()) for item in value.split(",") if item.strip()))
+    except ValueError as exc:
+        raise ValueError("--sweep-identities must be comma-separated integers") from exc
+    if not sizes or sizes[0] < 1:
+        raise ValueError("Sweep sizes must be positive")
+    return sizes
+
+
 def public_manifest(reference: list[dict], targets: list[dict], args) -> dict:
     """Reproducibility metadata without copying email contents or answers."""
     return {
@@ -312,6 +432,8 @@ def main() -> int:
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--scan-limit", type=int, default=5000)
     parser.add_argument("--identities", type=int, default=8)
+    parser.add_argument("--sweep-identities", metavar="N,N,...",
+                        help="run multiple target sample sizes and plot accuracy vs size")
     parser.add_argument("--sources-per-identity", type=int, default=4)
     parser.add_argument("--body-chars", type=int, default=4000)
     parser.add_argument("--max-target-tokens", type=int, default=8)
@@ -328,15 +450,24 @@ def main() -> int:
            args.body_chars, args.max_target_tokens, args.batch_size) < 1:
         raise ValueError("Numeric options must be positive")
 
+    sweep_sizes = parse_sweep(args.sweep_identities, args.identities)
     records = stream_records(args.scan_limit, args.body_chars)
-    reference, targets = select_experiment(
-        records, args.identities, args.sources_per_identity, args.max_target_tokens
-    )
-    manifest = public_manifest(reference, targets, args)
-    print(f"[selection] {len(reference)} reference emails, {len(targets)} held-out targets")
-    print(f"[selection] {sum(len(t['expected']) for t in targets)} redacted email tokens")
+
+    prepared = []
+    for size in sweep_sizes:
+        reference, targets = select_experiment(
+            records, size, args.sources_per_identity, args.max_target_tokens
+        )
+        manifest = public_manifest(reference, targets, args)
+        manifest["selection"]["identities"] = size
+        print(f"[selection n={size}] {len(reference)} reference emails, "
+              f"{len(targets)} held-out targets, "
+              f"{sum(len(t['expected']) for t in targets)} redacted tokens")
+        prepared.append((size, reference, targets, manifest))
+
     if args.prepare_only:
-        print(json.dumps(manifest, indent=2))
+        print(json.dumps({"sweep_sizes": sweep_sizes,
+                          "runs": [item[3] for item in prepared]}, indent=2))
         return 0
     if not args.confirm_public_data_processing:
         raise SystemExit(
@@ -345,37 +476,59 @@ def main() -> int:
         )
 
     client = make_client()
-    table, extractions = construct_table(client, args.model, reference, args.batch_size)
-    results = decode(client, args.model, table, targets)
-    metrics = {"table_attack": evaluate(results, targets)}
-    control_results = None
-    if args.with_control:
-        print("[control] attacking with an empty reference table")
-        control_results = decode(client, args.model, {"entities": []}, targets)
-        metrics["empty_table_control"] = evaluate(control_results, targets)
-        metrics["linkage_accuracy_lift"] = (
-            metrics["table_attack"]["accuracy"] - metrics["empty_table_control"]["accuracy"]
-        )
-
     args.output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    artifact = {
-        **manifest,
-        "timestamp": timestamp,
-        "model": args.model,
-        "reference_table": table,
-        "results": results,
-        "control_results": control_results,
-        "metrics": metrics,
-    }
-    # Local artifact contains real extracted data; experiment_outputs is gitignored.
-    (args.output_dir / f"run-{timestamp}.json").write_text(
-        json.dumps(artifact, indent=2, ensure_ascii=False), encoding="utf-8"
+    metric_rows = []
+    aggregate_runs = []
+    for size, reference, targets, manifest in prepared:
+        print(f"\n=== sample-size run: {size} held-out emails ===")
+        table, extractions = construct_table(client, args.model, reference, args.batch_size)
+        results = decode(client, args.model, table, targets)
+        metrics = {"table_attack": evaluate(results, targets)}
+        control_results = None
+        if args.with_control:
+            print("[control] attacking with an empty reference table")
+            control_results = decode(client, args.model, {"entities": []}, targets)
+            metrics["empty_table_control"] = evaluate(control_results, targets)
+            metrics["linkage_accuracy_lift"] = (
+                metrics["table_attack"]["accuracy"]
+                - metrics["empty_table_control"]["accuracy"]
+            )
+        artifact = {
+            **manifest,
+            "timestamp": timestamp,
+            "model": args.model,
+            "reference_table": table,
+            "results": results,
+            "control_results": control_results,
+            "metrics": metrics,
+        }
+        # Local artifacts contain real extracted data; experiment_outputs is gitignored.
+        run_path = args.output_dir / f"run-{timestamp}-n{size}.json"
+        run_path.write_text(json.dumps(artifact, indent=2, ensure_ascii=False),
+                            encoding="utf-8")
+        (args.output_dir / f"extractions-{timestamp}-n{size}.json").write_text(
+            json.dumps(extractions, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        metric_rows.append(metric_row(metrics, reference, targets, args, timestamp))
+        aggregate_runs.append({"sample_size": size, "metrics": metrics,
+                               "artifact": run_path.name})
+        print(json.dumps(metrics, indent=2))
+
+    csv_path = args.output_dir / f"metrics-{timestamp}.csv"
+    write_metric_csv(csv_path, metric_rows)
+    append_metric_history(args.output_dir / "metrics-history.csv", metric_rows)
+    plot_paths = plot_metrics(metric_rows, args.output_dir, timestamp)
+    (args.output_dir / f"sweep-{timestamp}.json").write_text(
+        json.dumps({"timestamp": timestamp, "model": args.model,
+                    "sweep_sizes": sweep_sizes, "runs": aggregate_runs,
+                    "metric_csv": csv_path.name,
+                    "plots": [path.name for path in plot_paths]}, indent=2),
+        encoding="utf-8"
     )
-    (args.output_dir / f"extractions-{timestamp}.json").write_text(
-        json.dumps(extractions, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    print(json.dumps(metrics, indent=2))
+    print(f"Saved metrics to {csv_path}")
+    for path in plot_paths:
+        print(f"Saved plot to {path}")
     print(f"Saved local artifacts to {args.output_dir}")
     return 0
 
